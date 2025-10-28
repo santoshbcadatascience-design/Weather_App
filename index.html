@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Weather & AQI Dashboard</title>
+
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Leaflet.js CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Font Awesome for Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+
+  <!-- ProgressBar.js for AQI Gauge -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/progressbar.js/1.1.0/progressbar.min.js"></script>
+
+  <style>
+    :root {
+      --glass-bg: rgba(255, 255, 255, 0.1);
+      --glass-border: rgba(255, 255, 255, 0.2);
+      --text-gradient: linear-gradient(90deg, #a855f7, #3b82f6);
+    }
+
+    body {
+      background: linear-gradient(135deg, #1e1b4b, #4c1d95);
+      min-height: 100vh;
+      font-family: 'Segoe UI', sans-serif;
+      color: white;
+    }
+
+    .glass-card {
+      background: var(--glass-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--glass-border);
+      border-radius: 1.5rem;
+      transition: all 0.3s ease;
+    }
+
+    .glass-card:hover {
+      transform: translateY(-8px);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+    }
+
+    .gradient-text {
+      background: var(--text-gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      font-weight: 700;
+    }
+
+    .search-input {
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      backdrop-filter: blur(8px);
+      color: white;
+      transition: all 0.3s ease;
+    }
+
+    .search-input:focus {
+      outline: none;
+      background: rgba(255, 255, 255, 0.25);
+      box-shadow: 0 0 20px rgba(168, 85, 247, 0.4);
+    }
+
+    .search-btn {
+      background: linear-gradient(45deg, #a855f7, #3b82f6);
+      transition: all 0.3s ease;
+    }
+
+    .search-btn:hover {
+      transform: scale(1.05);
+      box-shadow: 0 10px 20px rgba(168, 85, 247, 0.4);
+    }
+
+    .spinner {
+      border: 4px solid rgba(255, 255, 255, 0.3);
+      border-left: 4px solid #a855f7;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .aqi-circle {
+      width: 150px;
+      height: 150px;
+      margin: 0 auto;
+    }
+
+    .pollutant-item {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 0.75rem;
+      padding: 0.75rem;
+      transition: all 0.2s ease;
+    }
+
+    .pollutant-item:hover {
+      background: rgba(255, 255, 255, 0.2);
+      transform: translateX(4px);
+    }
+
+    .weather-icon {
+      font-size: 2.5rem;
+    }
+
+    @media (max-width: 768px) {
+      .grid-cols-1.md\:grid-cols-2 > div {
+        grid-column: span 1;
+      }
+      .aqi-circle { width: 120px; height: 120px; }
+    }
+  </style>
+</head>
+<body class="p-4 md:p-8">
+
+  <div class="max-w-7xl mx-auto">
+
+    <!-- Search Section -->
+    <div class="text-center mb-10">
+      <h1 class="text-4xl md:text-5xl font-bold gradient-text mb-4">Weather & Air Quality</h1>
+      <p class="text-gray-300 mb-6">Search any city worldwide</p>
+
+      <div class="flex flex-col sm:flex-row gap-3 max-w-md mx-auto">
+        <input
+          type="text"
+          id="cityInput"
+          class="search-input flex-1 px-5 py-3 rounded-xl text-lg placeholder-gray-400"
+          placeholder="Enter city name..."
+          onkeypress="handleEnter(event)"
+        />
+        <button
+          id="searchBtn"
+          class="search-btn text-white font-semibold px-6 py-3 rounded-xl flex items-center justify-center gap-2"
+        >
+          <i class="fas fa-search"></i> Search
+        </button>
+      </div>
+    </div>
+
+    <!-- Loading & Error -->
+    <div id="loading" class="hidden text-center py-10">
+      <div class="spinner mx-auto"></div>
+      <p class="mt-4 text-lg">Fetching data...</p>
+    </div>
+
+    <div id="error" class="hidden bg-red-500 bg-opacity-20 border border-red-400 text-red-200 p-4 rounded-xl text-center mb-6">
+      <i class="fas fa-exclamation-triangle mr-2"></i>
+      <span id="errorMsg"></span>
+    </div>
+
+    <!-- Main Content -->
+    <div id="content" class="hidden grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+
+      <!-- Weather Card -->
+      <div class="glass-card p-6 col-span-1 md:col-span-2 lg:col-span-1">
+        <h2 class="text-2xl font-bold mb-4 flex items-center gap-2">
+          <i class="fas fa-cloud-sun text-yellow-400"></i> Current Weather
+        </h2>
+        <div id="weatherCity" class="text-xl font-semibold mb-3"></div>
+
+        <div class="grid grid-cols-2 gap-4 text-center">
+          <div>
+            <div class="weather-icon text-yellow-400 mb-1">
+              <i id="tempIcon" class="fas"></i>
+            </div>
+            <div class="text-3xl font-bold" id="temperature">--°C</div>
+            <div class="text-sm text-gray-300">Temperature</div>
+          </div>
+
+          <div>
+            <div class="weather-icon text-blue-400 mb-1">
+              <i class="fas fa-tint"></i>
+            </div>
+            <div class="text-3xl font-bold" id="humidity">--%</div>
+            <div class="text-sm text-gray-300">Humidity</div>
+          </div>
+
+          <div>
+            <div class="weather-icon text-gray-300 mb-1">
+              <i class="fas fa-wind"></i>
+            </div>
+            <div class="text-3xl font-bold" id="windSpeed">-- m/s</div>
+            <div class="text-sm text-gray-300">Wind Speed</div>
+          </div>
+
+          <div>
+            <div class="weather-icon text-purple-400 mb-1">
+              <i class="fas fa-tachometer-alt"></i>
+            </div>
+            <div class="text-3xl font-bold" id="pressure">-- hPa</div>
+            <div class="text-sm text-gray-300">Pressure</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sunrise & Sunset -->
+      <div class="glass-card p-6">
+        <h2 class="text-2xl font-bold mb-4 flex items-center gap-2">
+          <i class="fas fa-sun text-yellow-500"></i> Sunrise & Sunset
+        </h2>
+        <div class="grid grid-cols-2 gap-4 text-center">
+          <div>
+            <div class="text-5xl mb-2 text-yellow-400">
+              <i class="fas fa-sun"></i>
+            </div>
+            <div class="text-2xl font-bold" id="sunrise">--:--</div>
+            <div class="text-sm text-gray-300">Sunrise</div>
+          </div>
+          <div>
+            <div class="text-5xl mb-2 text-orange-500">
+              <i class="fas fa-moon"></i>
+            </div>
+            <div class="text-2xl font-bold" id="sunset">--:--</div>
+            <div class="text-sm text-gray-300">Sunset</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AQI Card -->
+      <div class="glass-card p-6 md:col-span-2 lg:col-span-1">
+        <h2 class="text-2xl font-bold mb-4 flex items-center gap-2">
+          <i class="fas fa-smog text-red-400"></i> Air Quality Index
+        </h2>
+
+        <div class="aqi-circle" id="aqiGauge"></div>
+        <div class="text-center mt-3">
+          <div class="text-3xl font-bold" id="aqiValue">--</div>
+          <div class="text-lg font-medium" id="aqiLabel">Loading...</div>
+        </div>
+
+        <div class="mt-5 space-y-2" id="pollutantsList">
+          <!-- Pollutants will be injected here -->
+        </div>
+
+        <div class="text-xs text-gray-400 mt-4 text-center" id="aqiSource"></div>
+      </div>
+
+      <!-- Map View -->
+      <div class="glass-card p-0 overflow-hidden md:col-span-2 lg:col-span-3 h-96 rounded-2xl">
+        <div id="map" class="w-full h-full"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // DOM Elements
+    const cityInput = document.getElementById('cityInput');
+    const searchBtn = document.getElementById('searchBtn');
+    const loading = document.getElementById('loading');
+    const error = document.getElementById('error');
+    const errorMsg = document.getElementById('errorMsg');
+    const content = document.getElementById('content');
+
+    // Weather elements
+    const weatherCity = document.getElementById('weatherCity');
+    const temperature = document.getElementById('temperature');
+    const humidity = document.getElementById('humidity');
+    const windSpeed = document.getElementById('windSpeed');
+    const pressure = document.getElementById('pressure');
+    const tempIcon = document.getElementById('tempIcon');
+
+    // Sunrise/Sunset
+    const sunriseEl = document.getElementById('sunrise');
+    const sunsetEl = document.getElementById('sunset');
+
+    // AQI
+    let aqiBar;
+    const aqiValue = document.getElementById('aqiValue');
+    const aqiLabel = document.getElementById('aqiLabel');
+    const pollutantsList = document.getElementById('pollutantsList');
+    const aqiSource = document.getElementById('aqiSource');
+
+    // Map
+    let map, marker;
+
+    // Initialize AQI Progress Bar
+    function initAqiGauge() {
+      if (aqiBar) aqiBar.destroy();
+      aqiBar = new ProgressBar.Circle('#aqiGauge', {
+        strokeWidth: 10,
+        easing: 'easeInOut',
+        duration: 1400,
+        color: '#10b981',
+        trailColor: '#374151',
+        trailWidth: 10,
+        text: { value: '--', style: { color: '#fff', position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', fontSize: '1.5rem', fontWeight: 'bold' } }
+      });
+    }
+
+    // Format time to 12-hour
+    function formatTime(isoString) {
+      const date = new Date(isoString);
+      return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }).replace(':00', '');
+    }
+
+    // Set weather icon
+    function setWeatherIcon(code) {
+      const iconMap = {
+        0: 'fa-sun',           // Clear sky
+        1: 'fa-sun',           // Mainly clear
+        2: 'fa-cloud-sun',     // Partly cloudy
+        3: 'fa-cloud',         // Overcast
+        45: 'fa-smog',         // Fog
+        48: 'fa-smog',         // Depositing rime fog
+        51: 'fa-cloud-rain',   // Drizzle
+        61: 'fa-cloud-shower-heavy', // Rain
+        71: 'fa-snowflake',    // Snow
+        80: 'fa-cloud-rain',   // Rain showers
+        95: 'fa-bolt'          // Thunderstorm
+      };
+      const iconClass = iconMap[code] || 'fa-cloud';
+      tempIcon.className = `fas ${iconClass}`;
+    }
+
+    // AQI Color & Label
+    function getAqiColor(aqi) {
+      if (aqi <= 50) return '#10b981';   // Green
+      if (aqi <= 100) return '#f59e0b';  // Yellow
+      if (aqi <= 150) return '#f97316';  // Orange
+      if (aqi <= 200) return '#ef4444';  // Red
+      if (aqi <= 300) return '#a855f7';  // Purple
+      return '#7f1d1d';                  // Maroon
+    }
+
+    function getAqiLabel(aqi) {
+      if (aqi <= 50) return 'Good';
+      if (aqi <= 100) return 'Moderate';
+      if (aqi <= 150) return 'Unhealthy for Sensitive';
+      if (aqi <= 200) return 'Unhealthy';
+      if (aqi <= 300) return 'Very Unhealthy';
+      return 'Hazardous';
+    }
+
+    // Geocode city
+    async function geocodeCity(city) {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city)}&format=json&limit=1`);
+      const data = await res.json();
+      if (!data.length) throw new Error('City not found');
+      return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), name: data[0].display_name.split(',')[0] };
+    }
+
+    // Fetch Weather
+    async function fetchWeather(lat, lon) {
+      const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=relative_humidity_2m,surface_pressure&daily=sunrise,sunset&timezone=auto`);
+      const data = await res.json();
+      if (!data.current_weather) throw new Error('Weather data unavailable');
+
+      const current = data.current_weather;
+      const humidity = data.hourly.relative_humidity_2m[0];
+      const pressure = Math.round(data.hourly.surface_pressure[0]);
+
+      return {
+        temp: current.temperature,
+        humidity,
+        wind: current.windspeed,
+        pressure,
+        weathercode: current.weathercode,
+        sunrise: data.daily.sunrise[0],
+        sunset: data.daily.sunset[0]
+      };
+    }
+
+    // Fetch AQI
+    async function fetchAQI(lat, lon) {
+      const res = await fetch(`https://api.waqi.info/feed/geo:${lat};${lon}/?token=demo`);
+      const data = await res.json();
+      if (data.status !== 'ok') throw new Error('AQI data unavailable');
+
+      const aqi = data.data.aqi;
+      const iaqi = data.data.iaqi || {};
+      const city = data.data.city.name;
+
+      const pollutants = {
+        'PM2.5': iaqi.pm25?.v,
+        'PM10': iaqi.pm10?.v,
+        'NO₂': iaqi.no2?.v,
+        'O₃': iaqi.o3?.v,
+        'SO₂': iaqi.so2?.v,
+        'CO': iaqi.co?.v
+      };
+
+      return { aqi, pollutants, city };
+    }
+
+    // Update UI
+    function updateUI(data, aqiData, location) {
+      // Weather
+      weatherCity.textContent = location.name;
+      temperature.textContent = `${data.temp}°C`;
+      humidity.textContent = `${data.humidity}%`;
+      windSpeed.textContent = `${data.wind} m/s`;
+      pressure.textContent = `${data.pressure} hPa`;
+      setWeatherIcon(data.weathercode);
+
+      // Sunrise/Sunset
+      sunriseEl.textContent = formatTime(data.sunrise);
+      sunsetEl.textContent = formatTime(data.sunset);
+
+      // AQI
+      const color = getAqiColor(aqiData.aqi);
+      aqiValue.textContent = aqiData.aqi;
+      aqiLabel.textContent = getAqiLabel(aqiData.aqi);
+      aqiLabel.style.color = color;
+
+      aqiBar.animate(aqiData.aqi / 500, { duration: 1000 }, () => {
+        aqiBar.setText(aqiData.aqi);
+        aqiBar.path.setAttribute('stroke', color);
+      });
+
+      // Pollutants
+      pollutantsList.innerHTML = '';
+      for (const [key, value] of Object.entries(aqiData.pollutants)) {
+        if (value !== undefined) {
+          const unit = key === 'CO' ? 'ppm' : 'µg/m³';
+          const div = document.createElement('div');
+          div.className = 'pollutant-item flex justify-between items-center';
+          div.innerHTML = `
+            <span class="font-medium">${key}</span>
+            <span class="text-sm">${value} ${unit}</span>
+          `;
+          pollutantsList.appendChild(div);
+        }
+      }
+
+      aqiSource.textContent = `Data from: ${aqiData.city}`;
+
+      // Map
+      if (map) map.remove();
+      map = L.map('map').setView([location.lat, location.lon], 11);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(map);
+
+      marker = L.marker([location.lat, location.lon]).addTo(map)
+        .bindPopup(`<b>${location.name}</b>`)
+        .openPopup();
+    }
+
+    // Main Search Function
+    async function searchCity() {
+      const city = cityInput.value.trim();
+      if (!city) return;
+
+      loading.classList.remove('hidden');
+      error.classList.add('hidden');
+      content.classList.add('hidden');
+
+      try {
+        const location = await geocodeCity(city);
+        const [weather, aqiData] = await Promise.all([
+          fetchWeather(location.lat, location.lon),
+          fetchAQI(location.lat, location.lon)
+        ]);
+
+        updateUI(weather, aqiData, location);
+        content.classList.remove('hidden');
+      } catch (err) {
+        errorMsg.textContent = err.message;
+        error.classList.remove('hidden');
+      } finally {
+        loading.classList.add('hidden');
+      }
+    }
+
+    // Event Listeners
+    searchBtn.addEventListener('click', searchCity);
+    function handleEnter(e) {
+      if (e.key === 'Enter') searchCity();
+    }
+
+    // Initialize
+    window.onload = () => {
+      initAqiGauge();
+      // Optional: Load default city
+      // cityInput.value = 'Delhi'; searchCity();
+    };
+  </script>
+</body>
+</html>
